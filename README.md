@@ -1,185 +1,134 @@
 # drshare
 
-Tiny cross-device sharing between a Mac and Android, with a local-first architecture.
+Local-first drop sharing between your Mac and nearby devices.
 
-## Current Direction
+`drshare` runs as a tiny macOS menu bar host, serves a browser client over your LAN, and lets you send text or files without a remote backend.
 
-The chosen prototype is:
+## What It Is
 
-- no remote server
-- no Raycast dependency for the core product
-- tiny native Mac host app
-- LAN web UI for quick send/download on any client
-- optional native Android app for OS-level share integration
+Current project shape:
 
-The Mac app is the host.
+- Mac menu bar app is the host
+- browser client works immediately on phones, tablets, and other computers on the same network
+- no cloud relay
+- no account system
+- no App Store dependency right now
 
-It runs locally, serves a small web UI, and exposes a small HTTP API for sending and downloading drops over the LAN.
+Current supported actions:
 
-## Current Status
+- send text from the Mac app
+- send text from the web client
+- upload files from the Mac app
+- upload files from the web client
+- browse recent drops
+- download received files
+- copy received text
 
-The first implementation slice is in place.
+## Current Scope
 
 Implemented now:
 
-- Swift package scaffold at repo root
-- native Mac menu bar app at `/mac-app`
-- local HTTP server bound by the Mac app
-- browser UI served from `/`
-- pairing token required for API access
-- QR code pairing UI in the Mac app
-- Bonjour advertisement over `_drshare._tcp`
-- text send flow
-- file upload and download flow
-- configurable retention in the Mac app: `1h`, `24h`, `7d`, `never`
-- automatic expiry of drops and uploaded files after 24 hours by default
-- recent mixed drop list
-- local JSON persistence for recent drops
+- macOS host app
+- LAN web UI
+- pairing token
+- QR pairing
+- Bonjour advertisement
+- transfer progress for uploads and downloads
+- drop expiry with configurable retention
 
-Not implemented yet:
+Not shipped yet:
 
-- Android native client
-- share extension
+- Android native app
+- background clipboard sync
+- App Store distribution
 
-## Why This Direction
+## Requirements
 
-This keeps the prototype small while still useful:
+- macOS 14 or newer
+- Xcode installed
+- another device on the same local network if you want to use the browser client remotely
 
-- works without operating a backend
-- supports browser-based access immediately
-- leaves room for native Android features where the web is weak
-- avoids overcommitting to full clipboard sync, background mirroring, or multi-device complexity
+## Quick Start
 
-## Product Shape
-
-`v0` is an explicit send/download tool, not a silent background sync system.
-
-Core actions:
-
-- send text
-- upload a file or image
-- view the latest drops
-- download a received drop
-- copy received text
-
-## Platform Roles
-
-### Mac
-
-The Mac side is a small native app, ideally:
-
-- `MenuBarExtra` for the main UI
-- local HTTP server for transport and web UI
-- Bonjour/mDNS for discovery
-- QR code for pairing/opening the web client
-
-Optional later:
-
-- Share extension
-- Control Center action
-- clipboard watcher
-
-### Web Client
-
-The web client is a lightweight fallback interface, intended to:
-
-- send text
-- upload files/images
-- list latest drops
-- download files
-- copy text manually
-
-The web client is not the place to promise:
-
-- reliable background sync
-- passive clipboard mirroring
-- robust browser-independent binary clipboard handling
-
-### Android
-
-Android has two possible roles:
-
-- browser client over LAN for immediate use
-- small native app later for share sheet integration and better file handling
-
-That means Android does not block `v0`.
-
-## Docs
-
-- [Implementation Plan](/Users/macbookpro/Documents/projects/drshare/docs/IMPLEMENTATION_PLAN.md)
-- [Agent Handoff Checklist](/Users/macbookpro/Documents/projects/drshare/docs/AGENT_HANDOFF_CHECKLIST.md)
-
-## Proposed Repo Layout
-
-```txt
-/mac-app
-/web-client
-/shared
-/docs
-```
-
-Possible later:
-
-```txt
-/android-app
-```
-
-## Run
-
-Build:
-
-```bash
-swift build
-```
-
-If your active developer directory points to Command Line Tools instead of full Xcode, use:
-
-```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift build
-```
-
-This repo should be run with the Xcode toolchain, not the standalone Command Line Tools toolchain. Mixing them can leave incompatible build artifacts behind.
-
-Run the Mac host app:
+Clone the repo and run:
 
 ```bash
 ./scripts/run-mac.sh
 ```
 
-The app starts hosting automatically and prints a URL like:
+The app will:
+
+- build with the Xcode Swift toolchain
+- launch the menu bar host
+- print a LAN URL with a pairing token
+
+Example:
 
 ```txt
-http://127.0.0.1:3847/?token=ABCD-1234-EFGH
+http://192.168.1.15:3847/?token=ABCD-1234-EFGH
 ```
 
-Open that URL from another device on the same LAN, or swap `127.0.0.1` for the LAN IP shown by the app/session endpoint.
+Open that URL in a browser on another device on the same network.
 
-The wrapper script:
+## Local Storage
 
-- forces the Xcode Swift toolchain
-- uses a toolchain-specific scratch directory under `.build/`
-- defaults storage to `.drshare-state/`
+By default, app state is stored in:
 
-If you need a custom storage location:
+- `.drshare-state/` when using the wrapper script in this repo
+
+You can override that:
 
 ```bash
 DRSHARE_STORAGE_ROOT=$PWD/.drshare-state ./scripts/run-mac.sh
 ```
 
-For retention testing, you can override the default 24-hour expiry:
+## Retention
+
+Drops expire after `24h` by default.
+
+The Mac app lets you switch retention to:
+
+- `1h`
+- `24h`
+- `7d`
+- `never`
+
+You can also override retention while testing:
 
 ```bash
 DRSHARE_RETENTION_HOURS=0.5 ./scripts/run-mac.sh
 ```
 
-## Current API
+## How To Use It
 
-Public without token:
+### On Mac
+
+Use the menu bar app to:
+
+- drag and drop a file
+- choose a file from disk
+- send a short text note
+- copy text from recent drops
+- open downloaded files
+- show the QR code for pairing
+
+### On Another Device
+
+Open the LAN URL in a browser and:
+
+- enter the pairing token if needed
+- send text
+- upload a file
+- download recent files
+
+## API
+
+Public:
 
 - `GET /`
 - `GET /health`
 
-Requires the pairing token in `X-DrShare-Token` or `?token=`:
+Requires the pairing token via `X-DrShare-Token` or `?token=`:
 
 - `GET /api/session`
 - `GET /api/drops`
@@ -187,48 +136,48 @@ Requires the pairing token in `X-DrShare-Token` or `?token=`:
 - `POST /api/drops/file`
 - `GET /api/drops/:id/download`
 
-`POST /api/drops/file` currently accepts:
+File upload contract:
 
-- raw request body as the file bytes
-- `X-DrShare-Filename` header for the original filename
-- `Content-Type` header for the MIME type
-- a positive `Content-Length` header
+- raw request body is the file payload
+- send `X-DrShare-Filename`
+- send `Content-Type`
+- send a positive `Content-Length`
 
-Limits and caveats:
+Current file transfer notes:
 
-- uploads stream directly to disk instead of being buffered entirely in memory
+- uploads stream to disk
 - max upload size is `5 GB`
-- `Transfer-Encoding: chunked` is not supported yet
+- chunked transfer encoding is not supported yet
 
-Behavior:
+## Development
 
-- drops auto-expire after `24h` by default
-- retention can be changed in the Mac app to `1h`, `24h`, `7d`, or `never`
-- expired file drops are removed from disk and stop downloading
+Internal implementation notes now live in:
 
-Example:
+- [DEVELOPMENT.md](/Users/macbookpro/Documents/projects/drshare/DEVELOPMENT.md)
+
+## Troubleshooting
+
+### Swift Toolchain Errors
+
+Do not use plain `swift run` unless you know your active Swift toolchain matches previous build artifacts.
+
+Use:
 
 ```bash
-curl http://127.0.0.1:3847/health
-curl -H "X-DrShare-Token: ABCD-1234-EFGH" http://127.0.0.1:3847/api/session
-curl -X POST \
-  -H "X-DrShare-Token: ABCD-1234-EFGH" \
-  -H "Content-Type: application/json" \
-  -d '{"text":"hello from another device"}' \
-  http://127.0.0.1:3847/api/drops/text
-curl -X POST \
-  -H "X-DrShare-Token: ABCD-1234-EFGH" \
-  -H "X-DrShare-Filename: note.txt" \
-  -H "Content-Type: text/plain" \
-  --data-binary @note.txt \
-  http://127.0.0.1:3847/api/drops/file
+./scripts/run-mac.sh
 ```
 
-## Next Milestone
+That wrapper avoids mixed-toolchain build issues.
 
-Add the next layer on top of the working host, pairing, and file flow:
+### Can’t Connect From Phone
 
-1. Android-native share target using the existing LAN API
-2. better host feedback in the menu bar app
-3. optional QR scanning or manual host entry on Android
-4. share extension on macOS if Finder/app send-in becomes important
+Check:
+
+- both devices are on the same network
+- the Mac app is running
+- you are using the LAN URL, not only `127.0.0.1`
+- the pairing token matches
+
+## Status
+
+This is a working prototype meant for local use and source installs.
