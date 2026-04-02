@@ -1,221 +1,106 @@
 # drshare
 
-Local-first drop sharing between your Mac and nearby devices.
+Tiny local-first sharing between your Mac and nearby devices.
 
-`drshare` runs as a tiny macOS menu bar host, serves a browser client over your LAN, and lets you send text or files without a remote backend.
+![](https://mac-file.yaqeen.me/E3E325D0-Untitled%20design%20%283%29.png)
 
-## What It Is
+`drshare` runs as a macOS menu bar app, serves a browser client on your LAN, and lets you send text or files without a cloud relay.
 
-Current project shape:
+## Download
 
-- Mac menu bar app is the host
-- browser client works immediately on phones, tablets, and other computers on the same network
-- no cloud relay
-- no account system
-- no App Store dependency right now
+Download the latest macOS build from GitHub Releases:
 
-Current supported actions:
+- <https://github.com/Abdulmumin1/drshare/releases>
 
-- send text from the Mac app
-- send text from the web client
-- upload files from the Mac app
-- upload files from the web client
-- browse recent drops
-- download received files
-- copy received text
+Current release builds are unsigned, so macOS may warn on first launch.
 
-## Current Scope
+## What Works
 
-Implemented now:
-
-- macOS host app
-- LAN web UI
-- pairing token
+- Mac menu bar host
+- browser client for phones, tablets, and other computers on the same network
+- text send
+- file upload and download
 - QR pairing
-- Bonjour advertisement
-- transfer progress for uploads and downloads
-- drop expiry with configurable retention
+- transfer progress
+- configurable retention
 
-Not shipped yet:
+## What Is Not Built Yet
 
 - Android native app
 - background clipboard sync
-- App Store distribution
+- signed and notarized macOS releases
 
-## Requirements
+## Run From Source
+
+Requirements:
 
 - macOS 14 or newer
 - Xcode installed
-- another device on the same local network if you want to use the browser client remotely
 
-## Quick Start
-
-Clone the repo and run:
+Start the app:
 
 ```bash
 ./scripts/run-mac.sh
 ```
 
-The app will:
-
-- build with the Xcode Swift toolchain
-- launch the menu bar host
-- print a LAN URL with a pairing token
-
-Example:
+That prints a LAN URL like:
 
 ```txt
 http://192.168.1.15:3847/?token=ABCD-1234-EFGH
 ```
 
-Open that URL in a browser on another device on the same network.
+Open that URL on another device on the same network.
 
 ## Install Locally
 
-If you want a real app bundle in `/Applications` instead of running from the repo each time:
+Build and install a real app bundle into `/Applications`:
 
 ```bash
 ./scripts/install-mac-app.sh
 ```
 
-That script will:
-
-- build a release bundle at `dist/DrShare.app`
-- copy it to `/Applications/DrShare.app`
-
-If you only want the bundle without installing it:
+If you only want the bundle:
 
 ```bash
 ./scripts/build-mac-app.sh
 ```
 
-Then launch:
+The built app is placed at:
 
 - `dist/DrShare.app`
 
-or, after install:
+## Use
 
-- `/Applications/DrShare.app`
+On Mac:
 
-## GitHub Releases
-
-The repo now supports GitHub Release builds through Actions.
-
-Release flow:
-
-1. push a tag like `v0.1.0`
-2. GitHub Actions builds `DrShare.app`
-3. the workflow archives it as a zip
-4. the zip and checksum are attached to the GitHub Release
-
-Current release output:
-
-- unsigned macOS app bundle zip
-
-That is enough for source-style distribution through GitHub Releases, but macOS may still warn on first launch until proper Apple signing and notarization are added.
-
-## Local Storage
-
-By default, app state is stored in:
-
-- `.drshare-state/` when using the wrapper script in this repo
-
-You can override that:
-
-```bash
-DRSHARE_STORAGE_ROOT=$PWD/.drshare-state ./scripts/run-mac.sh
-```
-
-## Retention
-
-Drops expire after `24h` by default.
-
-The Mac app lets you switch retention to:
-
-- `1h`
-- `24h`
-- `7d`
-- `never`
-
-You can also override retention while testing:
-
-```bash
-DRSHARE_RETENTION_HOURS=0.5 ./scripts/run-mac.sh
-```
-
-## How To Use It
-
-### On Mac
-
-Use the menu bar app to:
-
-- drag and drop a file
+- drag in a file
 - choose a file from disk
 - send a short text note
-- copy text from recent drops
-- open downloaded files
+- copy recent text
+- open recent files
 - show the QR code for pairing
 
-### On Another Device
+On another device:
 
-Open the LAN URL in a browser and:
-
-- enter the pairing token if needed
+- open the LAN URL in a browser
 - send text
 - upload a file
 - download recent files
 
-## API
+## Limits
 
-Public:
-
-- `GET /`
-- `GET /health`
-
-Requires the pairing token via `X-DrShare-Token` or `?token=`:
-
-- `GET /api/session`
-- `GET /api/drops`
-- `POST /api/drops/text`
-- `POST /api/drops/file`
-- `GET /api/drops/:id/download`
-
-File upload contract:
-
-- raw request body is the file payload
-- send `X-DrShare-Filename`
-- send `Content-Type`
-- send a positive `Content-Length`
-
-Current file transfer notes:
-
-- uploads stream to disk
+- no remote backend
+- local network only
 - max upload size is `5 GB`
+- file uploads require `Content-Length`
 - chunked transfer encoding is not supported yet
 
 ## Troubleshooting
 
-### Swift Toolchain Errors
-
-Do not use plain `swift run` unless you know your active Swift toolchain matches previous build artifacts.
-
-Use:
+If you hit Swift toolchain errors, use:
 
 ```bash
 ./scripts/run-mac.sh
 ```
 
 That wrapper avoids mixed-toolchain build issues.
-
-### Can’t Connect From Phone
-
-Check:
-
-- both devices are on the same network
-- the Mac app is running
-- you are using the LAN URL, not only `127.0.0.1`
-- the pairing token matches
-
-## Status
-
-This is a working prototype meant for local use and source installs.

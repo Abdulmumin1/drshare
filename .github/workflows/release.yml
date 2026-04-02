@@ -66,5 +66,5 @@ jobs:
               "${archive}" \
               "${checksum}" \
               --title "drshare ${{ steps.version.outputs.version }}" \
-              --notes "Unsigned macOS build for local testing. Gatekeeper may warn on first launch until notarization is added."
+              --generate-notes
           fi
