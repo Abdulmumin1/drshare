@@ -142,7 +142,7 @@ struct MenuContentView: View {
                 .frame(maxWidth: .infinity, minHeight: 100)
                 .padding(.bottom, 16)
             } else {
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     VStack(spacing: 2) {
                         ForEach(model.recentDrops) { drop in
                             dropRow(for: drop)
