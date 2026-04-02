@@ -3,5 +3,6 @@
 .drshare-*/
 .home/
 .swiftpm/
+docs/
 *.bin
 *.DS_Store
