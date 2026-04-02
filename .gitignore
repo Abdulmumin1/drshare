@@ -1,0 +1,7 @@
+.build/
+.drshare-state/
+.drshare-*/
+.home/
+.swiftpm/
+*.bin
+*.DS_Store
