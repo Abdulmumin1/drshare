@@ -8,8 +8,11 @@ struct MenuContentView: View {
     @ObservedObject var model: AppModel
     @State private var showSettings = false
     @State private var showQR = false
+    @State private var showTextComposer = false
     @State private var isDropTargeted = false
     @State private var isHoveringUpload = false
+    @State private var draftText = ""
+    @State private var copiedDropID: UUID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -110,7 +113,8 @@ struct MenuContentView: View {
     private var recentDropsPanel: some View {
         VStack(spacing: 0) {
             uploadZone
-            
+            textComposerPanel
+
             if let activeTransfer = model.activeTransfer {
                 transferPanel(for: activeTransfer)
                     .padding(.horizontal, 14)
@@ -160,28 +164,73 @@ struct MenuContentView: View {
                 .frame(maxHeight: 400)
             }
             
-            Divider().background(Color.white.opacity(0.2))
-            
-            HStack {
-                Text(model.primaryShareURL ?? "NOT HOSTING")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer()
-                Button("COPY") {
-                    model.copyShareURL()
-                }
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
-                .buttonStyle(.plain)
-                .foregroundColor(.primary)
-                .disabled(model.primaryShareURL == nil)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(Color.black.opacity(0.2))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var textComposerPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    showTextComposer.toggle()
+                }
+            } label: {
+                HStack {
+                    Text("SEND TEXT")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.secondary)
+
+                    Spacer()
+
+                    Image(systemName: showTextComposer ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if showTextComposer {
+                HStack {
+                    Spacer()
+
+                    Button("SEND") {
+                        submitDraftText()
+                    }
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .buttonStyle(.plain)
+                    .foregroundColor(.primary)
+                    .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                ZStack(alignment: .topLeading) {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.03))
+                        .overlay(
+                            Rectangle()
+                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+
+                    TextEditor(text: $draftText)
+                        .font(.system(size: 10, design: .monospaced))
+                        .scrollContentBackground(.hidden)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+
+                    if draftText.isEmpty {
+                        Text("type a note to send")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary.opacity(0.7))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 10)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .frame(height: 74)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
     }
 
     private var uploadZone: some View {
@@ -285,10 +334,11 @@ struct MenuContentView: View {
                 if drop.kind == .text {
                     Button {
                         model.copyText(for: drop)
+                        markCopied(drop.id)
                     } label: {
-                        Image(systemName: "doc.on.doc")
+                        Image(systemName: copiedDropID == drop.id ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(.primary)
+                            .foregroundColor(copiedDropID == drop.id ? .green : .primary)
                             .padding(4)
                     }
                     .buttonStyle(.plain)
@@ -487,5 +537,27 @@ struct MenuContentView: View {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         return formatter.string(fromByteCount: Int64(bytes)).lowercased()
+    }
+
+    private func submitDraftText() {
+        let text = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            return
+        }
+
+        model.sendText(text)
+        draftText = ""
+        showTextComposer = false
+    }
+
+    private func markCopied(_ dropID: UUID) {
+        copiedDropID = dropID
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.9))
+            if copiedDropID == dropID {
+                copiedDropID = nil
+            }
+        }
     }
 }

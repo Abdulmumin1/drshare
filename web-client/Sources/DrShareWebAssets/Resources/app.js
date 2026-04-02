@@ -260,22 +260,15 @@ function renderDrops(drops) {
     const item = document.createElement("li");
     item.className = "drop";
 
-    const createdAt = drop.created_at || drop.createdAt;
-    const createdLabel = createdAt
-      ? new Date(createdAt).toLocaleString()
-      : "just now";
-
-    item.innerHTML = `
-      <div class="drop-header">
-        <strong>${escapeHtml(labelFor(drop))}</strong>
-        <span class="meta">${escapeHtml(createdLabel)}</span>
-      </div>
-    `;
-
     if ((drop.kind || "text") === "file") {
+      const title = document.createElement("p");
+      title.className = "drop-file-name";
+      title.textContent = drop.filename || "untitled file";
+      item.append(title);
+
       const meta = document.createElement("p");
       meta.className = "meta";
-      meta.textContent = `${drop.filename || "Untitled file"} · ${drop.mime || "application/octet-stream"} · ${formatBytes(drop.size || 0)}`;
+      meta.textContent = formatBytes(drop.size || 0);
       item.append(meta);
 
       const actions = document.createElement("div");
@@ -590,12 +583,6 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
-}
-
-function labelFor(drop) {
-  const sender = drop.sender || "web";
-  const kind = drop.kind || "text";
-  return `${sender} ${kind}`;
 }
 
 function withToken(path) {

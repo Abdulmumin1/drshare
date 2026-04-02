@@ -160,6 +160,20 @@ final class AppModel: ObservableObject {
         rebuildStoreAndHost()
     }
 
+    func sendText(_ text: String) {
+        let currentDropStore = dropStore
+
+        Task { [weak self] in
+            do {
+                let drop = try await currentDropStore.addTextDrop(text: text, sender: .mac)
+                self?.lastError = nil
+                self?.insertDrop(drop)
+            } catch {
+                self?.lastError = error.localizedDescription
+            }
+        }
+    }
+
     func uploadFile(from url: URL) {
         let uploadID = UUID()
         let currentDropStore = dropStore

@@ -254,12 +254,15 @@ input:focus, textarea:focus {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.drop-header {
-  display: flex; justify-content: space-between; align-items: baseline;
-  font-size: 0.8125rem; margin-bottom: 8px;
+.drop-file-name {
+  font-size: 0.9375rem;
+  font-weight: bold;
+  color: var(--ink);
+  margin-bottom: 6px;
+  word-break: break-word;
+  text-transform: none;
 }
 
-.drop-title { font-weight: bold; color: var(--ink); text-transform: lowercase; }
 .meta { color: var(--muted); }
 
 .drop pre {
@@ -281,6 +284,7 @@ input:focus, textarea:focus {
   cursor: pointer;
 }
 .drop-link:hover { background: rgba(255, 255, 255, 0.12); }
+.drop-link:active { transform: translateY(1px); }
 
 .empty-state { padding: 40px 0; text-align: center; color: var(--muted); font-size: 0.875rem; text-transform: lowercase; }
 .feedback { font-size: 0.8125rem; color: var(--error); margin-bottom: 12px; text-transform: lowercase; }
