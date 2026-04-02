@@ -16,6 +16,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var isAdvertisingBonjour = false
     @Published private(set) var bonjourDescription: String?
     @Published private(set) var lastError: String?
+    @Published private(set) var activeTransfer: UploadActivity?
 
     private var dropStore: DropStore
     private let port: UInt16 = 3847
@@ -84,6 +85,11 @@ final class AppModel: ObservableObject {
                     Task { @MainActor [weak self] in
                         self?.isAdvertisingBonjour = isAdvertising
                         self?.bonjourDescription = description ?? HostDiscovery.fallbackStatusDescription()
+                    }
+                },
+                onTransferActivity: { [weak self] activity in
+                    Task { @MainActor [weak self] in
+                        self?.applyTransferActivity(activity)
                     }
                 },
                 onDropAdded: { [weak self] drop in
@@ -155,7 +161,11 @@ final class AppModel: ObservableObject {
     }
 
     func uploadFile(from url: URL) {
-        Task {
+        let uploadID = UUID()
+        let currentDropStore = dropStore
+        let progressReporter = TransferReporter(model: self)
+
+        Task { [weak self] in
             do {
                 let isSecurityScoped = url.startAccessingSecurityScopedResource()
                 defer {
@@ -165,6 +175,19 @@ final class AppModel: ObservableObject {
                 }
 
                 let filename = url.lastPathComponent
+                let fileSize = try Self.fileSize(for: url)
+                self?.applyTransferActivity(
+                    UploadActivity(
+                        sessionID: uploadID,
+                        filename: filename,
+                        transferredBytes: 0,
+                        totalBytes: fileSize,
+                        direction: .sending,
+                        phase: .preparing,
+                        errorMessage: nil
+                    )
+                )
+
                 let temporaryURL = FileManager.default.temporaryDirectory
                     .appendingPathComponent("drshare-local-upload-\(UUID().uuidString)", isDirectory: false)
                 defer {
@@ -175,8 +198,19 @@ final class AppModel: ObservableObject {
                     try? FileManager.default.removeItem(at: temporaryURL)
                 }
 
-                try FileManager.default.copyItem(at: url, to: temporaryURL)
-                let fileSize = try Self.fileSize(for: temporaryURL)
+                try await Self.copyFileChunked(from: url, to: temporaryURL) { copiedBytes in
+                    progressReporter.publish(
+                        UploadActivity(
+                            sessionID: uploadID,
+                            filename: filename,
+                            transferredBytes: copiedBytes,
+                            totalBytes: fileSize,
+                            direction: .sending,
+                            phase: .transferring,
+                            errorMessage: nil
+                        )
+                    )
+                }
 
                 // Extremely rudimentary mime detection just for the UI
                 let ext = url.pathExtension.lowercased()
@@ -191,20 +225,40 @@ final class AppModel: ObservableObject {
                 default: mime = "application/octet-stream"
                 }
 
-                let drop = try await dropStore.addFileDrop(
+                self?.applyTransferActivity(
+                    UploadActivity(
+                        sessionID: uploadID,
+                        filename: filename,
+                        transferredBytes: fileSize,
+                        totalBytes: fileSize,
+                        direction: .sending,
+                        phase: .finalizing,
+                        errorMessage: nil
+                    )
+                )
+
+                let drop = try await currentDropStore.addFileDrop(
                     fromTemporaryFileAt: temporaryURL,
                     size: fileSize,
                     filename: filename,
                     mime: mime,
                     sender: .mac
                 )
-                await MainActor.run {
-                    self.insertDrop(drop)
-                }
+                self?.insertDrop(drop)
+                self?.completeTransfer(sessionID: uploadID)
             } catch {
-                await MainActor.run {
-                    self.lastError = error.localizedDescription
-                }
+                self?.lastError = error.localizedDescription
+                self?.applyTransferActivity(
+                    UploadActivity(
+                        sessionID: uploadID,
+                        filename: url.lastPathComponent,
+                        transferredBytes: 0,
+                        totalBytes: 0,
+                        direction: .sending,
+                        phase: .failed,
+                        errorMessage: error.localizedDescription
+                    )
+                )
             }
         }
     }
@@ -327,13 +381,49 @@ final class AppModel: ObservableObject {
         dropThumbnails = dropThumbnails.filter { visibleIDs.contains($0.key) }
     }
 
+    fileprivate func applyTransferActivity(_ activity: UploadActivity) {
+        activeTransfer = activity
+
+        if activity.phase == .completed {
+            scheduleTransferClear(sessionID: activity.sessionID)
+        }
+    }
+
+    private func completeTransfer(sessionID: UUID) {
+        guard activeTransfer?.sessionID == sessionID else {
+            return
+        }
+
+        activeTransfer = UploadActivity(
+            sessionID: sessionID,
+            filename: activeTransfer?.filename ?? "file",
+            transferredBytes: activeTransfer?.totalBytes ?? 0,
+            totalBytes: activeTransfer?.totalBytes ?? 0,
+            direction: activeTransfer?.direction ?? .sending,
+            phase: .completed,
+            errorMessage: nil
+        )
+
+        scheduleTransferClear(sessionID: sessionID)
+    }
+
+    private func scheduleTransferClear(sessionID: UUID) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard self?.activeTransfer?.sessionID == sessionID else {
+                return
+            }
+            self?.activeTransfer = nil
+        }
+    }
+
     private func printLaunchHint() {
         if let primaryShareURL {
             print("[drshare] host ready at \(primaryShareURL)")
         }
     }
 
-    private static func fileSize(for url: URL) throws -> Int {
+    nonisolated private static func fileSize(for url: URL) throws -> Int {
         let values = try url.resourceValues(forKeys: [.fileSizeKey])
         if let fileSize = values.fileSize {
             return fileSize
@@ -341,6 +431,42 @@ final class AppModel: ObservableObject {
 
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         return (attributes[.size] as? NSNumber)?.intValue ?? 0
+    }
+
+    nonisolated private static func copyFileChunked(
+        from sourceURL: URL,
+        to destinationURL: URL,
+        progress: @escaping @Sendable (Int) async -> Void
+    ) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            FileManager.default.createFile(atPath: destinationURL.path, contents: nil)
+
+            let sourceHandle = try FileHandle(forReadingFrom: sourceURL)
+            let destinationHandle = try FileHandle(forWritingTo: destinationURL)
+            defer {
+                try? sourceHandle.close()
+                try? destinationHandle.close()
+            }
+
+            let chunkSize = 1_048_576
+            var copiedBytes = 0
+
+            while true {
+                let chunk = sourceHandle.readData(ofLength: chunkSize)
+                guard !chunk.isEmpty else {
+                    break
+                }
+
+                try destinationHandle.write(contentsOf: chunk)
+                copiedBytes += chunk.count
+                await progress(copiedBytes)
+            }
+
+            let destinationSize = try fileSize(for: destinationURL)
+            guard destinationSize == copiedBytes else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+        }.value
     }
 
     private static func formatRetention(seconds: Int) -> String {
@@ -381,6 +507,20 @@ final class AppModel: ObservableObject {
 
         if shouldRestartHost {
             startHosting()
+        }
+    }
+}
+
+private final class TransferReporter: @unchecked Sendable {
+    weak var model: AppModel?
+
+    init(model: AppModel) {
+        self.model = model
+    }
+
+    func publish(_ activity: UploadActivity) {
+        Task { @MainActor [weak self] in
+            self?.model?.applyTransferActivity(activity)
         }
     }
 }

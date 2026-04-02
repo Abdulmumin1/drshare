@@ -1,11 +1,17 @@
 const state = {
   token: "",
   session: null,
+  transferResetTimer: null,
 };
 
 const elements = {
   connectionIndicator: document.querySelector("#connection-indicator"),
-  hostSummary: document.querySelector("#host-summary"),
+  showInfoBtn: document.querySelector("#show-info-btn"),
+  infoModal: document.querySelector("#info-modal"),
+  closeInfoBtn: document.querySelector("#close-info-btn"),
+  modalUrl: document.querySelector("#modal-url"),
+  modalToken: document.querySelector("#modal-token"),
+  modalRetention: document.querySelector("#modal-retention"),
   pairingSection: document.querySelector("#pairing-section"),
   tokenForm: document.querySelector("#token-form"),
   tokenInput: document.querySelector("#token-input"),
@@ -13,7 +19,13 @@ const elements = {
   textInput: document.querySelector("#text-input"),
   fileForm: document.querySelector("#file-form"),
   fileInput: document.querySelector("#file-input"),
+  fileSubmitButton: document.querySelector("#file-submit-button"),
   fileHint: document.querySelector("#file-hint"),
+  transferPanel: document.querySelector("#transfer-panel"),
+  transferTitle: document.querySelector("#transfer-title"),
+  transferPercent: document.querySelector("#transfer-percent"),
+  transferBarFill: document.querySelector("#transfer-bar-fill"),
+  transferMeta: document.querySelector("#transfer-meta"),
   refreshButton: document.querySelector("#refresh-button"),
   feedback: document.querySelector("#feedback"),
   dropsList: document.querySelector("#drops-list"),
@@ -121,21 +133,59 @@ function bindEvents() {
     }
 
     try {
-      await api("/api/drops/file", {
+      setFileUploadBusy(true);
+      showTransfer({
+        title: `uploading ${file.name}`,
+        loaded: 0,
+        total: file.size,
+        detail: `starting upload · ${formatBytes(file.size)}`,
+      });
+
+      await requestWithProgress("/api/drops/file", {
         method: "POST",
         headers: {
           "Content-Type": file.type || "application/octet-stream",
           "X-DrShare-Filename": encodeURIComponent(file.name),
         },
         body: file,
-      }, false);
+        expectJson: true,
+        onUploadProgress: (loaded, total) => {
+          const effectiveTotal = total || file.size;
+          showTransfer({
+            title: `uploading ${file.name}`,
+            loaded,
+            total: effectiveTotal,
+            detail: `uploaded ${formatBytes(loaded)} / ${formatBytes(effectiveTotal)}`,
+          });
+        },
+      });
 
       elements.fileInput.value = "";
+      const display = document.getElementById("file-name-display");
+      if (display) {
+        display.textContent = "Click to select or drop a file";
+      }
       setFeedback("");
+      showTransfer({
+        title: `uploaded ${file.name}`,
+        loaded: file.size,
+        total: file.size,
+        detail: `done · ${formatBytes(file.size)}`,
+      });
+      scheduleTransferReset();
       await loadDrops();
       switchTab("view-drops");
     } catch (error) {
       setFeedback(error.message);
+      showTransfer({
+        title: `upload failed`,
+        loaded: 0,
+        total: file.size,
+        detail: error.message,
+        isError: true,
+      });
+    } finally {
+      setFileUploadBusy(false);
     }
   });
 
@@ -143,31 +193,50 @@ function bindEvents() {
     await loadSession();
     await loadDrops();
   });
+
+  elements.showInfoBtn.addEventListener("click", () => {
+    elements.infoModal.hidden = false;
+  });
+
+  elements.closeInfoBtn.addEventListener("click", () => {
+    elements.infoModal.hidden = true;
+  });
+
+  elements.infoModal.addEventListener("click", (event) => {
+    if (event.target === elements.infoModal) {
+      elements.infoModal.hidden = true;
+    }
+  });
 }
 
 async function loadSession() {
   try {
     state.session = await api("/api/session");
     elements.connectionIndicator.classList.add("connected");
+    elements.showInfoBtn.hidden = false;
     elements.pairingSection.hidden = true;
     const primaryUrl = state.session.urls[0] || window.location.origin;
-    const shortUrl = primaryUrl.replace(/^https?:\/\//, '');
-    const retentionText = typeof state.session.retention_seconds === "number"
-      ? ` · clears after ${formatDuration(state.session.retention_seconds)}`
-      : "";
-    elements.hostSummary.textContent = `${shortUrl} · token ${state.session.token_hint}${retentionText}`;
+    elements.modalUrl.textContent = primaryUrl;
+    elements.modalToken.textContent = state.session.token_hint;
+    elements.modalRetention.textContent = typeof state.session.retention_seconds === "number"
+      ? `auto clears after ${formatDuration(state.session.retention_seconds)}`
+      : "never";
+
     if (typeof state.session.max_upload_bytes === "number") {
       const retentionHint = typeof state.session.retention_seconds === "number"
         ? ` · auto clears after ${formatDuration(state.session.retention_seconds)}`
         : "";
-      elements.fileHint.textContent = `Max size: ${formatBytes(state.session.max_upload_bytes)}${retentionHint}`;
+      elements.fileHint.textContent = `max size: ${formatBytes(state.session.max_upload_bytes)}${retentionHint}`;
     }
     setFeedback("");
   } catch (error) {
     elements.connectionIndicator.classList.remove("connected");
     elements.pairingSection.hidden = false;
-    elements.hostSummary.textContent = "Not connected";
-    elements.fileHint.textContent = "Max size: Unknown";
+    elements.showInfoBtn.hidden = true;
+    elements.modalUrl.textContent = "";
+    elements.modalToken.textContent = "";
+    elements.modalRetention.textContent = "";
+    elements.fileHint.textContent = "max size: unknown";
   }
 }
 
@@ -213,12 +282,14 @@ function renderDrops(drops) {
       actions.className = "drop-actions";
 
       if (drop.download_path || drop.downloadPath) {
-        const downloadLink = document.createElement("a");
-        downloadLink.className = "drop-link";
-        downloadLink.textContent = "Download";
-        downloadLink.href = withToken(drop.download_path || drop.downloadPath);
-        downloadLink.download = drop.filename || "";
-        actions.append(downloadLink);
+        const downloadButton = document.createElement("button");
+        downloadButton.className = "drop-link";
+        downloadButton.type = "button";
+        downloadButton.textContent = "Download";
+        downloadButton.addEventListener("click", () => {
+          void downloadDrop(drop);
+        });
+        actions.append(downloadButton);
       }
 
       item.append(actions);
@@ -264,8 +335,252 @@ async function api(path, options = {}, expectJson = true) {
   return response.json();
 }
 
+async function downloadDrop(drop) {
+  const filename = drop.filename || "download";
+  const path = drop.download_path || drop.downloadPath;
+  const expectedSize = Number(drop.size) || 0;
+
+  try {
+    let completedBytes = expectedSize;
+
+    showTransfer({
+      title: `downloading ${filename}`,
+      loaded: 0,
+      total: expectedSize,
+      detail: `starting download${expectedSize > 0 ? ` · ${formatBytes(expectedSize)}` : ""}`,
+    });
+
+    if ("showSaveFilePicker" in window) {
+      completedBytes = await streamDownloadToFile(path, filename, expectedSize);
+    } else {
+      const blob = await requestWithProgress(path, {
+        method: "GET",
+        expectJson: false,
+        responseType: "blob",
+        onDownloadProgress: (loaded, total) => {
+          const effectiveTotal = total || expectedSize || loaded;
+          showTransfer({
+            title: `downloading ${filename}`,
+            loaded,
+            total: effectiveTotal,
+            detail: `downloaded ${formatBytes(loaded)} / ${formatBytes(effectiveTotal)}`,
+          });
+        },
+      });
+
+      triggerDownload(blob, filename);
+      completedBytes = expectedSize || blob.size;
+    }
+
+    showTransfer({
+      title: `downloaded ${filename}`,
+      loaded: completedBytes,
+      total: completedBytes,
+      detail: `done · ${formatBytes(completedBytes)}`,
+    });
+    scheduleTransferReset();
+    setFeedback("");
+  } catch (error) {
+    setFeedback(error.message);
+    showTransfer({
+      title: "download failed",
+      loaded: 0,
+      total: expectedSize,
+      detail: error.message,
+      isError: true,
+    });
+  }
+}
+
 function setFeedback(message) {
   elements.feedback.textContent = message;
+}
+
+function setFileUploadBusy(isBusy) {
+  elements.fileInput.disabled = isBusy;
+  elements.fileSubmitButton.disabled = isBusy;
+  elements.fileSubmitButton.textContent = isBusy ? "Uploading…" : "Upload";
+}
+
+function showTransfer({ title, loaded, total, detail, isError = false }) {
+  if (state.transferResetTimer) {
+    window.clearTimeout(state.transferResetTimer);
+    state.transferResetTimer = null;
+  }
+
+  const safeTotal = Number.isFinite(total) && total > 0 ? total : Math.max(loaded, 0);
+  const progress = safeTotal > 0 ? Math.min(Math.max(loaded / safeTotal, 0), 1) : 0;
+
+  elements.transferPanel.hidden = false;
+  elements.transferTitle.textContent = title;
+  elements.transferPercent.textContent = isError ? "error" : `${Math.round(progress * 100)}%`;
+  elements.transferMeta.textContent = detail;
+  elements.transferMeta.style.color = isError ? "var(--error)" : "";
+  elements.transferPercent.style.color = isError ? "var(--error)" : "";
+  elements.transferBarFill.style.width = `${progress * 100}%`;
+  elements.transferBarFill.style.background = isError ? "var(--error)" : "var(--ink)";
+}
+
+function scheduleTransferReset() {
+  if (state.transferResetTimer) {
+    window.clearTimeout(state.transferResetTimer);
+  }
+
+  state.transferResetTimer = window.setTimeout(() => {
+    elements.transferPanel.hidden = true;
+    elements.transferBarFill.style.width = "0%";
+    elements.transferMeta.style.color = "";
+    elements.transferPercent.style.color = "";
+    state.transferResetTimer = null;
+  }, 1400);
+}
+
+function triggerDownload(blob, filename) {
+  const objectURL = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = objectURL;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectURL), 1000);
+}
+
+async function streamDownloadToFile(path, filename, expectedSize) {
+  const fileHandle = await window.showSaveFilePicker({
+    suggestedName: filename,
+  });
+
+  const response = await fetch(withToken(path), {
+    headers: state.token ? {
+      "X-DrShare-Token": state.token,
+    } : {},
+  });
+
+  if (!response.ok) {
+    let message = `Request failed with ${response.status}`;
+
+    try {
+      const payload = await response.json();
+      message = payload.error || message;
+    } catch (_) {
+      // Keep generic message.
+    }
+
+    throw new Error(message);
+  }
+
+  if (!response.body) {
+    throw new Error("Streaming download is not available in this browser.");
+  }
+
+  const writable = await fileHandle.createWritable();
+  const reader = response.body.getReader();
+  const total = Number(response.headers.get("content-length")) || expectedSize;
+  let loaded = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      loaded += value.byteLength;
+      await writable.write(value);
+      showTransfer({
+        title: `downloading ${filename}`,
+        loaded,
+        total,
+        detail: `downloaded ${formatBytes(loaded)} / ${formatBytes(total || loaded)}`,
+      });
+    }
+
+    await writable.close();
+    return loaded;
+  } catch (error) {
+    await writable.abort();
+    throw error;
+  }
+}
+
+function requestWithProgress(path, options = {}) {
+  const {
+    method = "GET",
+    headers = {},
+    body = null,
+    expectJson = true,
+    responseType = "text",
+    onUploadProgress,
+    onDownloadProgress,
+  } = options;
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, path, true);
+    xhr.responseType = responseType === "blob" ? "blob" : "text";
+
+    if (state.token) {
+      xhr.setRequestHeader("X-DrShare-Token", state.token);
+    }
+
+    for (const [header, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(header, value);
+    }
+
+    if (xhr.upload && typeof onUploadProgress === "function") {
+      xhr.upload.onprogress = (event) => {
+        onUploadProgress(event.loaded, event.lengthComputable ? event.total : 0);
+      };
+    }
+
+    if (typeof onDownloadProgress === "function") {
+      xhr.onprogress = (event) => {
+        onDownloadProgress(event.loaded, event.lengthComputable ? event.total : 0);
+      };
+    }
+
+    xhr.onerror = () => {
+      reject(new Error("Network error."));
+    };
+
+    xhr.onload = async () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        let message = `Request failed with ${xhr.status}`;
+
+        try {
+          const payloadText = xhr.responseType === "blob"
+            ? await xhr.response.text()
+            : xhr.responseText;
+          const payload = JSON.parse(payloadText);
+          message = payload.error || message;
+        } catch (_) {
+          // Keep the generic message when the body is not JSON.
+        }
+
+        reject(new Error(message));
+        return;
+      }
+
+      if (responseType === "blob") {
+        resolve(xhr.response);
+        return;
+      }
+
+      if (!expectJson) {
+        resolve(xhr.responseText);
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(xhr.responseText));
+      } catch (_) {
+        reject(new Error("Invalid server response."));
+      }
+    };
+
+    xhr.send(body);
+  });
 }
 
 function escapeHtml(value) {

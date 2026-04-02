@@ -13,6 +13,7 @@ final class HTTPServer: @unchecked Sendable {
         let dropStore: DropStore
         let onServerError: @Sendable (String) -> Void
         let onBonjourUpdate: @Sendable (Bool, String?) -> Void
+        let onTransferActivity: @Sendable (UploadActivity) -> Void
         let onDropAdded: @Sendable (DropRecord) -> Void
     }
 
@@ -143,11 +144,26 @@ private final class ConnectionHandler: @unchecked Sendable {
                 if let pendingUpload {
                     do {
                         try pendingUpload.append(data)
+                        reportIncomingTransfer(
+                            sessionID: pendingUpload.sessionID,
+                            filename: pendingUpload.filename,
+                            transferredBytes: pendingUpload.receivedBytes,
+                            totalBytes: pendingUpload.expectedBytes,
+                            phase: .transferring
+                        )
                     } catch {
                         let response = HTTPResponse.json(
                             APIErrorResponse(error: error.localizedDescription),
                             statusCode: 500,
                             reasonPhrase: "Internal Server Error"
+                        )
+                        reportIncomingTransfer(
+                            sessionID: pendingUpload.sessionID,
+                            filename: pendingUpload.filename,
+                            transferredBytes: pendingUpload.receivedBytes,
+                            totalBytes: pendingUpload.expectedBytes,
+                            phase: .failed,
+                            errorMessage: error.localizedDescription
                         )
                         pendingUpload.cancel()
                         self.pendingUpload = nil
@@ -394,6 +410,13 @@ private final class ConnectionHandler: @unchecked Sendable {
 
             buffer.removeAll(keepingCapacity: false)
             pendingUpload = upload
+            reportIncomingTransfer(
+                sessionID: upload.sessionID,
+                filename: upload.filename,
+                transferredBytes: upload.receivedBytes,
+                totalBytes: upload.expectedBytes,
+                phase: .transferring
+            )
 
             if upload.isComplete {
                 completePendingUpload(upload)
@@ -410,10 +433,18 @@ private final class ConnectionHandler: @unchecked Sendable {
     private func completePendingUpload(_ upload: PendingUpload) {
         pendingUpload = nil
         upload.close()
+        reportIncomingTransfer(
+            sessionID: upload.sessionID,
+            filename: upload.filename,
+            transferredBytes: upload.expectedBytes,
+            totalBytes: upload.expectedBytes,
+            phase: .finalizing
+        )
         let temporaryFileURL = upload.temporaryFileURL
         let expectedBytes = upload.expectedBytes
         let filename = upload.filename
         let mime = upload.mime
+        let sessionID = upload.sessionID
 
         Task {
             do {
@@ -425,21 +456,68 @@ private final class ConnectionHandler: @unchecked Sendable {
                     sender: .web
                 )
                 configuration.onDropAdded(drop)
+                reportIncomingTransfer(
+                    sessionID: sessionID,
+                    filename: filename,
+                    transferredBytes: expectedBytes,
+                    totalBytes: expectedBytes,
+                    phase: .completed
+                )
                 send(.json(FileDropCreateResponse(drop: drop), statusCode: 201, reasonPhrase: "Created"))
             } catch {
                 try? FileManager.default.removeItem(at: temporaryFileURL)
+                reportIncomingTransfer(
+                    sessionID: sessionID,
+                    filename: filename,
+                    transferredBytes: 0,
+                    totalBytes: expectedBytes,
+                    phase: .failed,
+                    errorMessage: error.localizedDescription
+                )
                 send(.json(APIErrorResponse(error: error.localizedDescription), statusCode: 400, reasonPhrase: "Bad Request"))
             }
         }
     }
 
     private func cancelPendingUpload() {
+        if let pendingUpload {
+            reportIncomingTransfer(
+                sessionID: pendingUpload.sessionID,
+                filename: pendingUpload.filename,
+                transferredBytes: pendingUpload.receivedBytes,
+                totalBytes: pendingUpload.expectedBytes,
+                phase: .failed,
+                errorMessage: "Upload cancelled."
+            )
+        }
         pendingUpload?.cancel()
         pendingUpload = nil
+    }
+
+    private func reportIncomingTransfer(
+        sessionID: UUID,
+        filename: String,
+        transferredBytes: Int,
+        totalBytes: Int,
+        phase: UploadActivity.Phase,
+        errorMessage: String? = nil
+    ) {
+        configuration.onTransferActivity(
+            UploadActivity(
+                sessionID: sessionID,
+                filename: filename.isEmpty ? "untitled file" : filename,
+                transferredBytes: transferredBytes,
+                totalBytes: totalBytes,
+                direction: .receiving,
+                phase: phase,
+                errorMessage: errorMessage
+            )
+        )
     }
 }
 
 private final class PendingUpload {
+    let sessionID = UUID()
     let expectedBytes: Int
     let filename: String
     let mime: String

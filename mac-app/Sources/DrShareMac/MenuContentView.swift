@@ -111,6 +111,12 @@ struct MenuContentView: View {
         VStack(spacing: 0) {
             uploadZone
             
+            if let activeTransfer = model.activeTransfer {
+                transferPanel(for: activeTransfer)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+            }
+            
             HStack {
                 Text("RECENT")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -317,6 +323,35 @@ struct MenuContentView: View {
         }
     }
 
+    private func transferPanel(for transfer: UploadActivity) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(transferTitle(for: transfer))
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(.primary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text(transfer.phase == .failed ? "error" : progressPercent(for: transfer))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(transfer.phase == .failed ? .red : .secondary)
+            }
+
+            ProgressView(value: max(transfer.progressFraction, transfer.phase == .completed ? 1 : 0))
+                .progressViewStyle(.linear)
+                .tint(transfer.phase == .failed ? .red : .white)
+                .scaleEffect(x: 1, y: 0.65, anchor: .center)
+
+            Text(transferSubtitle(for: transfer))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(transfer.phase == .failed ? .red : .secondary)
+                .lineLimit(2)
+        }
+        .padding(8)
+        .background(Rectangle().fill(Color.white.opacity(0.04)))
+    }
+
     private var settingsPanel: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
@@ -420,5 +455,37 @@ struct MenuContentView: View {
         }
 
         return "drops auto-expire after \(model.retentionDescription)."
+    }
+
+    private func transferTitle(for transfer: UploadActivity) -> String {
+        let verb = transfer.direction == .sending ? "sending" : "receiving"
+        return "\(verb) \(transfer.filename.lowercased())"
+    }
+
+    private func transferSubtitle(for transfer: UploadActivity) -> String {
+        let bytes = "\(fileSizeLabel(transfer.transferredBytes)) / \(fileSizeLabel(transfer.totalBytes))"
+
+        switch transfer.phase {
+        case .preparing:
+            return "preparing \(transfer.direction == .sending ? "upload" : "download")..."
+        case .transferring:
+            return transfer.direction == .sending ? "uploading \(bytes)" : "downloading \(bytes)"
+        case .finalizing:
+            return "finishing \(bytes)"
+        case .completed:
+            return "done \(bytes)"
+        case .failed:
+            return transfer.errorMessage ?? "transfer failed"
+        }
+    }
+
+    private func progressPercent(for transfer: UploadActivity) -> String {
+        "\(Int((transfer.progressFraction * 100).rounded()))%"
+    }
+
+    private func fileSizeLabel(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes)).lowercased()
     }
 }
