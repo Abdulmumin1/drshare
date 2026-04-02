@@ -4,5 +4,6 @@
 .home/
 .swiftpm/
 docs/
+dist/
 *.bin
 *.DS_Store

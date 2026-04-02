@@ -70,6 +70,50 @@ http://192.168.1.15:3847/?token=ABCD-1234-EFGH
 
 Open that URL in a browser on another device on the same network.
 
+## Install Locally
+
+If you want a real app bundle in `/Applications` instead of running from the repo each time:
+
+```bash
+./scripts/install-mac-app.sh
+```
+
+That script will:
+
+- build a release bundle at `dist/DrShare.app`
+- copy it to `/Applications/DrShare.app`
+
+If you only want the bundle without installing it:
+
+```bash
+./scripts/build-mac-app.sh
+```
+
+Then launch:
+
+- `dist/DrShare.app`
+
+or, after install:
+
+- `/Applications/DrShare.app`
+
+## GitHub Releases
+
+The repo now supports GitHub Release builds through Actions.
+
+Release flow:
+
+1. push a tag like `v0.1.0`
+2. GitHub Actions builds `DrShare.app`
+3. the workflow archives it as a zip
+4. the zip and checksum are attached to the GitHub Release
+
+Current release output:
+
+- unsigned macOS app bundle zip
+
+That is enough for source-style distribution through GitHub Releases, but macOS may still warn on first launch until proper Apple signing and notarization are added.
+
 ## Local Storage
 
 By default, app state is stored in:
@@ -148,12 +192,6 @@ Current file transfer notes:
 - uploads stream to disk
 - max upload size is `5 GB`
 - chunked transfer encoding is not supported yet
-
-## Development
-
-Internal implementation notes now live in:
-
-- [DEVELOPMENT.md](/Users/macbookpro/Documents/projects/drshare/DEVELOPMENT.md)
 
 ## Troubleshooting
 

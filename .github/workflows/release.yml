@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            tag="${GITHUB_REF_NAME}"
+          else
+            version="0.0.0-dev.${GITHUB_RUN_NUMBER}"
+            tag="manual-${GITHUB_RUN_NUMBER}"
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build release archive
+        shell: bash
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          APP_BUILD: ${{ github.run_number }}
+        run: ./scripts/archive-mac-app.sh
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: drshare-macos-${{ steps.version.outputs.version }}
+          path: |
+            dist/DrShare-${{ steps.version.outputs.version }}-macOS.zip
+            dist/DrShare-${{ steps.version.outputs.version }}-macOS.zip.sha256
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          archive="dist/DrShare-${{ steps.version.outputs.version }}-macOS.zip"
+          checksum="${archive}.sha256"
+
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            gh release upload "${{ steps.version.outputs.tag }}" \
+              "${archive}" \
+              "${checksum}" \
+              --clobber
+          else
+            gh release create "${{ steps.version.outputs.tag }}" \
+              "${archive}" \
+              "${checksum}" \
+              --title "drshare ${{ steps.version.outputs.version }}" \
+              --notes "Unsigned macOS build for local testing. Gatekeeper may warn on first launch until notarization is added."
+          fi
