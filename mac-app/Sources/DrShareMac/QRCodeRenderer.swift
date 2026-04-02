@@ -2,8 +2,6 @@ import AppKit
 import CoreImage
 
 enum QRCodeRenderer {
-    private static let context = CIContext(options: nil)
-
     static func image(for string: String, dimension: CGFloat = 172) -> NSImage? {
         guard let data = string.data(using: .utf8) else {
             return nil
@@ -27,6 +25,7 @@ enum QRCodeRenderer {
 
         let scale = floor(dimension / max(extent.width, extent.height))
         let scaledImage = outputImage.transformed(by: CGAffineTransform(scaleX: max(scale, 1), y: max(scale, 1)))
+        let context = CIContext(options: nil)
 
         guard let cgImage = context.createCGImage(scaledImage, from: scaledImage.extent) else {
             return nil
